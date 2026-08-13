@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from fastapi import APIRouter, Depends, HTTPException, Query
 from .. import models, schemas
 from ..database import get_db
 from ..deps import require_admin
@@ -15,6 +15,8 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 async def list_users(
     q: str | None = None,
     role: models.UserRole | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: models.User = Depends(require_admin),
 ):
@@ -26,6 +28,7 @@ async def list_users(
         stmt = stmt.where(
             models.User.full_name.ilike(like) | models.User.email.ilike(like)
         )
+    stmt = stmt.limit(limit).offset(offset)
     result = await db.execute(stmt)
     return result.scalars().all()
 

@@ -50,3 +50,27 @@ async def login(
 @router.get("/me", response_model=schemas.UserOut)
 async def me(current: models.User = Depends(get_current_user)):
     return current
+
+@router.patch("/me", response_model=schemas.UserOut)
+async def update_me(
+    data: schemas.SelfUpdate,
+    db: AsyncSession = Depends(get_db),
+    current: models.User = Depends(get_current_user),
+):
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(current, field, value)
+    await db.commit()
+    await db.refresh(current)
+    return current
+
+
+@router.post("/change-password", status_code=204)
+async def change_password(
+    data: schemas.ChangePassword,
+    db: AsyncSession = Depends(get_db),
+    current: models.User = Depends(get_current_user),
+):
+    if not verify_password(data.old_password, current.hashed_password):
+        raise HTTPException(status_code=400, detail="Текущий пароль указан неверно")
+    current.hashed_password = hash_password(data.new_password)
+    await db.commit()

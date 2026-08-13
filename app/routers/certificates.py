@@ -33,6 +33,31 @@ async def my_certificates(
     return out
 
 
+@router.get("/verify/{serial}", response_model=schemas.CertificateVerify)
+async def verify_certificate(serial: str, db: AsyncSession = Depends(get_db)):
+    """Публичная проверка подлинности сертификата по номеру (без авторизации)."""
+    cert = await db.scalar(
+        select(models.Certificate)
+        .options(
+            selectinload(models.Certificate.course),
+            selectinload(models.Certificate.user),
+        )
+        .where(models.Certificate.serial_number == serial)
+    )
+    if not cert:
+        return schemas.CertificateVerify(valid=False)
+    return schemas.CertificateVerify(
+        valid=True,
+        serial_number=cert.serial_number,
+        user_name=cert.user.full_name if cert.user else None,
+        course_title=cert.course.title if cert.course else None,
+        category=cert.course.category if cert.course else None,
+        score=cert.score,
+        issued_at=cert.issued_at,
+    )
+
+
+
 @router.get("/{cert_id}/download")
 async def download_certificate(
     cert_id: int,

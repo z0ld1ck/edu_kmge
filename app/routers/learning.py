@@ -94,6 +94,35 @@ async def my_courses(
         )
     return out
 
+@router.get("/my/attempts", response_model=list[schemas.AttemptOut])
+async def my_attempts(
+    db: AsyncSession = Depends(get_db),
+    current: models.User = Depends(get_current_user),
+):
+    """История попыток прохождения тестов текущим пользователем."""
+    rows = await db.execute(
+        select(models.QuizAttempt, models.Course.id, models.Course.title)
+        .join(models.Quiz, models.Quiz.id == models.QuizAttempt.quiz_id)
+        .join(models.Course, models.Course.id == models.Quiz.course_id)
+        .where(models.QuizAttempt.user_id == current.id)
+        .order_by(models.QuizAttempt.created_at.desc())
+    )
+    out: list[schemas.AttemptOut] = []
+    for attempt, course_id, course_title in rows.all():
+        out.append(
+            schemas.AttemptOut(
+                id=attempt.id,
+                quiz_id=attempt.quiz_id,
+                course_id=course_id,
+                course_title=course_title,
+                score=attempt.score,
+                passed=attempt.passed,
+                created_at=attempt.created_at,
+            )
+        )
+    return out
+
+
 
 @router.get("/courses/{course_id}/progress", response_model=list[int])
 async def completed_lessons(

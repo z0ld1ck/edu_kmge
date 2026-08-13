@@ -200,6 +200,28 @@ class CertificateOut(BaseModel):
     course_title: str | None = None
     user_name: str | None = None
 
+class CertificateVerify(BaseModel):
+    """Публичная проверка сертификата по серийному номеру."""
+    valid: bool
+    serial_number: str | None = None
+    user_name: str | None = None
+    course_title: str | None = None
+    category: str | None = None
+    score: float | None = None
+    issued_at: datetime | None = None
+
+
+# ---------- Quiz attempts ----------
+class AttemptOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    quiz_id: int
+    course_id: int | None = None
+    course_title: str | None = None
+    score: float
+    passed: bool
+    created_at: datetime
+
 
 # ---------- AI ----------
 class AIChatRequest(BaseModel):
@@ -235,6 +257,19 @@ class CourseStat(BaseModel):
     completed: int
     avg_progress: float
     avg_score: float | None = None
+    
+    
+class SelfUpdate(BaseModel):
+    """Изменение собственного профиля (без роли и статуса)."""
+    full_name: str | None = None
+    department: str | None = None
+    position: str | None = None
+
+
+class ChangePassword(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=6)
+
 
 
 class UserProgressStat(BaseModel):
