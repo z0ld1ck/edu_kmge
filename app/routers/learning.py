@@ -10,13 +10,13 @@ from sqlalchemy.orm import selectinload
 from .. import models, schemas
 from ..database import get_db
 from ..deps import get_current_user
-from ..serializers import course_out
+from ..serializers import course_out, enrollment_out
 
 router = APIRouter(prefix="/api", tags=["learning"])
 
 
 async def _get_enrollment(
-    db: AsyncSession, user_id: int, course_id: int
+        db: AsyncSession, user_id: int, course_id: int
 ) -> models.Enrollment | None:
     return await db.scalar(
         select(models.Enrollment)
@@ -53,9 +53,9 @@ async def _recompute_progress(db: AsyncSession, enrollment: models.Enrollment) -
 
 @router.post("/courses/{course_id}/enroll", response_model=schemas.EnrollmentOut, status_code=201)
 async def enroll(
-    course_id: int,
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(get_current_user),
+        course_id: int,
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(get_current_user),
 ):
     course = await db.get(models.Course, course_id)
     if not course or not course.is_published:
@@ -72,8 +72,8 @@ async def enroll(
 
 @router.get("/my/courses", response_model=list[schemas.MyCourseOut])
 async def my_courses(
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(models.Enrollment)
@@ -89,15 +89,15 @@ async def my_courses(
         out.append(
             schemas.MyCourseOut(
                 course=course_out(enr.course),
-                enrollment=schemas.EnrollmentOut.model_validate(enr),
-            )
+                enrollment=enrollment_out(enr), )
         )
     return out
 
+
 @router.get("/my/attempts", response_model=list[schemas.AttemptOut])
 async def my_attempts(
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(get_current_user),
 ):
     """История попыток прохождения тестов текущим пользователем."""
     rows = await db.execute(
@@ -123,12 +123,11 @@ async def my_attempts(
     return out
 
 
-
 @router.get("/courses/{course_id}/progress", response_model=list[int])
 async def completed_lessons(
-    course_id: int,
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(get_current_user),
+        course_id: int,
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(get_current_user),
 ):
     """Список ID завершённых уроков в рамках курса."""
     enrollment = await _get_enrollment(db, current.id, course_id)
@@ -139,9 +138,9 @@ async def completed_lessons(
 
 @router.post("/lessons/{lesson_id}/complete", response_model=schemas.EnrollmentOut)
 async def complete_lesson(
-    lesson_id: int,
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(get_current_user),
+        lesson_id: int,
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(get_current_user),
 ):
     lesson = await db.get(models.Lesson, lesson_id)
     if not lesson:
@@ -188,10 +187,10 @@ async def complete_lesson(
 
 @router.post("/courses/{course_id}/quiz/submit", response_model=schemas.QuizResult)
 async def submit_quiz(
-    course_id: int,
-    submission: schemas.QuizSubmission,
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(get_current_user),
+        course_id: int,
+        submission: schemas.QuizSubmission,
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(get_current_user),
 ):
     course = await db.get(models.Course, course_id)
     if not course:

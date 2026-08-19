@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from .models import EnrollmentStatus, UserRole
 
@@ -50,15 +50,35 @@ class UserOut(UserBase):
 
 
 # ---------- Lessons ----------
+
+
+class LessonMaterial(BaseModel):
+    """Материал урока — ссылка на внешний ресурс (файл в БД не хранится)."""
+    title: str
+    url: str
+    type: str = "link"  # pdf | doc | video | image | link
+
+
 class LessonBase(BaseModel):
     title: str
     content: str = ""
     video_url: str | None = None
     order: int = 0
+    materials: list[LessonMaterial] = []
+
+    @field_validator("materials", mode="before")
+    @classmethod
+    def _none_to_list(cls, v):
+        return v or []
 
 
 class LessonCreate(LessonBase):
     pass
+
+    content: str | None = None
+    video_url: str | None = None
+    order: int | None = None
+    materials: list[LessonMaterial] | None = None
 
 
 class LessonUpdate(BaseModel):
@@ -180,12 +200,43 @@ class EnrollmentOut(BaseModel):
     progress: float
     enrolled_at: datetime
     completed_at: datetime | None = None
+    due_date: datetime | None = None
+    is_mandatory: bool = False
+    assigned: bool = False
+    is_overdue: bool = False
 
 
 class MyCourseOut(BaseModel):
     """Курс + прогресс текущего пользователя."""
     course: CourseOut
     enrollment: EnrollmentOut
+
+
+class AssignmentCreate(BaseModel):
+    course_id: int
+    user_ids: list[int] = []
+    department: str | None = None
+    due_date: datetime | None = None
+    is_mandatory: bool = True
+
+
+class AssignmentResult(BaseModel):
+    assigned: int
+
+
+class AssignmentRow(BaseModel):
+    """Строка списка назначений для админа."""
+    enrollment_id: int
+    user_id: int
+    user_name: str
+    department: str | None = None
+    course_id: int
+    course_title: str
+    status: EnrollmentStatus
+    progress: float
+    due_date: datetime | None = None
+    is_mandatory: bool = False
+    is_overdue: bool = False
 
 
 # ---------- Certificates ----------
@@ -199,6 +250,7 @@ class CertificateOut(BaseModel):
     issued_at: datetime
     course_title: str | None = None
     user_name: str | None = None
+
 
 class CertificateVerify(BaseModel):
     """Публичная проверка сертификата по серийному номеру."""
@@ -257,8 +309,8 @@ class CourseStat(BaseModel):
     completed: int
     avg_progress: float
     avg_score: float | None = None
-    
-    
+
+
 class SelfUpdate(BaseModel):
     """Изменение собственного профиля (без роли и статуса)."""
     full_name: str | None = None
@@ -269,7 +321,6 @@ class SelfUpdate(BaseModel):
 class ChangePassword(BaseModel):
     old_password: str
     new_password: str = Field(min_length=6)
-
 
 
 class UserProgressStat(BaseModel):

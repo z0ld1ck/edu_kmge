@@ -6,7 +6,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import init_db
-from .routers import ai, analytics, auth, certificates, courses, learning, users
+from .routers import (
+    ai,
+    analytics,
+    assignments,
+    auth,
+    certificates,
+    courses,
+    learning,
+    users,
+)
 from .seed import seed
 
 
@@ -39,6 +48,7 @@ app.include_router(learning.router)
 app.include_router(certificates.router)
 app.include_router(ai.router)
 app.include_router(analytics.router)
+app.include_router(assignments.router)
 
 
 @app.get("/api/health", tags=["health"])

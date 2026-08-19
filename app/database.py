@@ -41,3 +41,16 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+# Лёгкая авто-миграция для существующих БД (dev, без Alembic):
+        # добавляем новые колонки назначений, если их ещё нет.
+        for ddl in (
+            "ALTER TABLE enrollments ADD COLUMN due_date TIMESTAMP",
+            "ALTER TABLE enrollments ADD COLUMN is_mandatory BOOLEAN",
+            "ALTER TABLE enrollments ADD COLUMN assigned_by_id INTEGER",
+            "ALTER TABLE lessons ADD COLUMN materials JSON",
+        ):
+            try:
+                await conn.exec_driver_sql(ddl)
+            except Exception:
+                pass  # колонка уже существует

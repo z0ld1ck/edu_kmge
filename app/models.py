@@ -5,6 +5,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Enum,
@@ -47,7 +48,9 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     enrollments: Mapped[list[Enrollment]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="Enrollment.user_id",
     )
     certificates: Mapped[list[Certificate]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -90,7 +93,9 @@ class Lesson(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     video_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     order: Mapped[int] = mapped_column(Integer, default=0)
-
+    # Материалы урока — список ссылок [{title, url, type}]. Файлы не хранятся
+    # в БД: только ссылки на внешние ресурсы (портал, диск, видео).
+    materials: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     course: Mapped[Course] = relationship(back_populates="lessons")
 
 
@@ -108,7 +113,16 @@ class Enrollment(Base):
     enrolled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped[User] = relationship(back_populates="enrollments")
+    # Назначение: срок, обязательность, кто назначил (None — самозапись).
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False)
+    assigned_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    user: Mapped[User] = relationship(
+        back_populates="enrollments", foreign_keys=[user_id]
+    )
     course: Mapped[Course] = relationship(back_populates="enrollments")
     lesson_progress: Mapped[list[LessonProgress]] = relationship(
         back_populates="enrollment", cascade="all, delete-orphan"
