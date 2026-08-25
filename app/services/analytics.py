@@ -5,7 +5,7 @@ import io
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy.orm import selectinload
 from .. import models
 
 
@@ -33,7 +33,9 @@ async def overview(db: AsyncSession) -> dict:
 
 
 async def course_stats(db: AsyncSession) -> list[dict]:
-    result = await db.execute(select(models.Course))
+    result = await db.execute(
+        select(models.Course).options(selectinload(models.Course.quiz))
+    )
     courses = result.scalars().all()
     stats: list[dict] = []
     for course in courses:

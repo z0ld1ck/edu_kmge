@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     app_name: str = "KMGE Edu — СДО"
     environment: str = "development"
 
+    # Хранилище загруженных материалов уроков (файлы на диске, не в БД).
+    media_root: str = "media"
+    max_upload_mb: int = 25
+
     # База данных. По умолчанию — Postgres (docker-compose).
     # Для локального smoke-теста можно подставить sqlite+aiosqlite.
     database_url: str = "postgresql+asyncpg://edu:edu@localhost:5432/edu"

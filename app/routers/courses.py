@@ -1,16 +1,22 @@
 """Курсы: CRUD, уроки, тест. Управление — admin/teacher."""
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .. import models, schemas
+from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, require_staff
 from ..serializers import course_detail, course_out
 
 router = APIRouter(prefix="/api/courses", tags=["courses"])
 
+_MEDIA_LESSONS = Path(settings.media_root) / "lessons"
 _LOAD = (selectinload(models.Course.lessons), selectinload(models.Course.quiz))
 
 
@@ -24,11 +30,11 @@ async def _get_course(db: AsyncSession, course_id: int) -> models.Course:
 
 @router.get("", response_model=list[schemas.CourseOut])
 async def list_courses(
-    q: str | None = None,
-    category: str | None = None,
-    published_only: bool = True,
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(get_current_user),
+        q: str | None = None,
+        category: str | None = None,
+        published_only: bool = True,
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(get_current_user),
 ):
     stmt = select(models.Course).options(*_LOAD).order_by(models.Course.created_at.desc())
     # Студент видит только опубликованные; персонал — все.
@@ -44,8 +50,8 @@ async def list_courses(
 
 @router.get("/categories", response_model=list[str])
 async def categories(
-    db: AsyncSession = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(get_current_user),
 ):
     result = await db.execute(select(models.Course.category).distinct())
     return sorted({row for row in result.scalars().all() if row})
@@ -53,9 +59,9 @@ async def categories(
 
 @router.get("/{course_id}", response_model=schemas.CourseDetail)
 async def get_course(
-    course_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+        course_id: int,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(get_current_user),
 ):
     course = await _get_course(db, course_id)
     return course_detail(course)
@@ -63,9 +69,9 @@ async def get_course(
 
 @router.post("", response_model=schemas.CourseDetail, status_code=201)
 async def create_course(
-    data: schemas.CourseCreate,
-    db: AsyncSession = Depends(get_db),
-    staff: models.User = Depends(require_staff),
+        data: schemas.CourseCreate,
+        db: AsyncSession = Depends(get_db),
+        staff: models.User = Depends(require_staff),
 ):
     course = models.Course(**data.model_dump(), created_by=staff.id)
     db.add(course)
@@ -76,10 +82,10 @@ async def create_course(
 
 @router.patch("/{course_id}", response_model=schemas.CourseDetail)
 async def update_course(
-    course_id: int,
-    data: schemas.CourseUpdate,
-    db: AsyncSession = Depends(get_db),
-    _: models.User = Depends(require_staff),
+        course_id: int,
+        data: schemas.CourseUpdate,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
 ):
     course = await _get_course(db, course_id)
     for field, value in data.model_dump(exclude_unset=True).items():
@@ -91,9 +97,9 @@ async def update_course(
 
 @router.delete("/{course_id}", status_code=204)
 async def delete_course(
-    course_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: models.User = Depends(require_staff),
+        course_id: int,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
 ):
     course = await db.get(models.Course, course_id)
     if not course:
@@ -105,10 +111,10 @@ async def delete_course(
 # ---------- Уроки ----------
 @router.post("/{course_id}/lessons", response_model=schemas.LessonOut, status_code=201)
 async def add_lesson(
-    course_id: int,
-    data: schemas.LessonCreate,
-    db: AsyncSession = Depends(get_db),
-    _: models.User = Depends(require_staff),
+        course_id: int,
+        data: schemas.LessonCreate,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
 ):
     course = await db.get(models.Course, course_id)
     if not course:
@@ -122,10 +128,10 @@ async def add_lesson(
 
 @router.patch("/lessons/{lesson_id}", response_model=schemas.LessonOut)
 async def update_lesson(
-    lesson_id: int,
-    data: schemas.LessonUpdate,
-    db: AsyncSession = Depends(get_db),
-    _: models.User = Depends(require_staff),
+        lesson_id: int,
+        data: schemas.LessonUpdate,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
 ):
     lesson = await db.get(models.Lesson, lesson_id)
     if not lesson:
@@ -139,9 +145,9 @@ async def update_lesson(
 
 @router.delete("/lessons/{lesson_id}", status_code=204)
 async def delete_lesson(
-    lesson_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: models.User = Depends(require_staff),
+        lesson_id: int,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
 ):
     lesson = await db.get(models.Lesson, lesson_id)
     if not lesson:
@@ -150,13 +156,134 @@ async def delete_lesson(
     await db.commit()
 
 
+# ---------- Материалы урока ----------
+def _material_url(lesson_id: int, filename: str) -> str:
+    return f"/api/courses/materials/{lesson_id}/{filename}"
+
+
+async def _get_lesson_or_404(db: AsyncSession, lesson_id: int) -> models.Lesson:
+    lesson = await db.get(models.Lesson, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Урок не найден")
+    return lesson
+
+
+@router.post("/lessons/{lesson_id}/materials/link", response_model=schemas.LessonOut)
+async def add_material_link(
+        lesson_id: int,
+        data: schemas.MaterialLinkCreate,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
+):
+    """Добавить материал-ссылку на внешний ресурс."""
+    lesson = await _get_lesson_or_404(db, lesson_id)
+    material = {
+        "id": uuid.uuid4().hex,
+        "title": data.title or data.url,
+        "url": data.url,
+        "type": data.type or "link",
+        "file": False,
+    }
+    lesson.materials = list(lesson.materials or []) + [material]
+    await db.commit()
+    await db.refresh(lesson)
+    return lesson
+
+
+@router.post("/lessons/{lesson_id}/materials/upload", response_model=schemas.LessonOut)
+async def upload_material(
+        lesson_id: int,
+        title: str = Form(""),
+        file: UploadFile = File(...),
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
+):
+    """Загрузить PDF-файл материала. Файл кладётся на диск, в БД — метаданные."""
+    lesson = await _get_lesson_or_404(db, lesson_id)
+    is_pdf = (file.content_type == "application/pdf") or (
+            file.filename or ""
+    ).lower().endswith(".pdf")
+    if not is_pdf:
+        raise HTTPException(status_code=400, detail="Разрешены только PDF-файлы")
+
+    data = await file.read()
+    limit = settings.max_upload_mb * 1024 * 1024
+    if len(data) > limit:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Файл больше {settings.max_upload_mb} МБ",
+        )
+
+    dest_dir = _MEDIA_LESSONS / str(lesson_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stored = f"{uuid.uuid4().hex}.pdf"
+    (dest_dir / stored).write_bytes(data)
+
+    material = {
+        "id": uuid.uuid4().hex,
+        "title": title.strip() or (file.filename or "Материал"),
+        "url": _material_url(lesson_id, stored),
+        "type": "pdf",
+        "file": True,
+    }
+    lesson.materials = list(lesson.materials or []) + [material]
+    await db.commit()
+    await db.refresh(lesson)
+    return lesson
+
+
+@router.delete("/lessons/{lesson_id}/materials/{material_id}", response_model=schemas.LessonOut)
+async def delete_material(
+        lesson_id: int,
+        material_id: str,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
+):
+    """Удалить материал (и файл с диска, если это загруженный файл)."""
+    lesson = await _get_lesson_or_404(db, lesson_id)
+    materials = list(lesson.materials or [])
+    kept: list[dict] = []
+    removed: dict | None = None
+    for m in materials:
+        if m.get("id") == material_id:
+            removed = m
+        else:
+            kept.append(m)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="Материал не найден")
+    if removed.get("file"):
+        fname = removed.get("url", "").rsplit("/", 1)[-1]
+        try:
+            (_MEDIA_LESSONS / str(lesson_id) / fname).unlink(missing_ok=True)
+        except Exception:
+            pass
+    lesson.materials = kept
+    await db.commit()
+    await db.refresh(lesson)
+    return lesson
+
+
+@router.get("/materials/{lesson_id}/{filename}")
+async def get_material_file(
+        lesson_id: int,
+        filename: str,
+        _: models.User = Depends(get_current_user),
+):
+    """Отдать PDF-файл (для встроенного просмотра через авторизованный запрос)."""
+    safe = Path(filename).name  # защита от path traversal
+    path = _MEDIA_LESSONS / str(lesson_id) / safe
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    return FileResponse(path, media_type="application/pdf", filename=safe)
+
+
 # ---------- Тест ----------
 @router.put("/{course_id}/quiz", response_model=schemas.QuizOut)
 async def set_quiz(
-    course_id: int,
-    data: schemas.QuizCreate,
-    db: AsyncSession = Depends(get_db),
-    _: models.User = Depends(require_staff),
+        course_id: int,
+        data: schemas.QuizCreate,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
 ):
     """Полностью заменяет тест курса (idempotent)."""
     course = await _get_course(db, course_id)
@@ -180,9 +307,9 @@ async def set_quiz(
 
 @router.get("/{course_id}/quiz", response_model=schemas.QuizOut)
 async def get_quiz(
-    course_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+        course_id: int,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(get_current_user),
 ):
     quiz = await db.scalar(
         select(models.Quiz)

@@ -49,14 +49,41 @@ class UserOut(UserBase):
     created_at: datetime
 
 
+# ---------- Массовый импорт пользователей ----------
+class ImportedAccount(BaseModel):
+    email: str
+    full_name: str
+    password: str  # эффективный пароль (заданный или сгенерированный)
+
+
+class ImportRowIssue(BaseModel):
+    row: int
+    email: str
+    reason: str
+
+
+class UserImportResult(BaseModel):
+    created: int = 0
+    skipped: int = 0
+    accounts: list[ImportedAccount] = []
+    issues: list[ImportRowIssue] = []
+
+
 # ---------- Lessons ----------
 
 
 class LessonMaterial(BaseModel):
-    """Материал урока — ссылка на внешний ресурс (файл в БД не хранится)."""
+    id: str | None = None
     title: str
     url: str
     type: str = "link"  # pdf | doc | video | image | link
+    file: bool = False  # True — загруженный на сервер файл (просмотр встроенный)
+
+
+class MaterialLinkCreate(BaseModel):
+    title: str = ""
+    url: str
+    type: str = "link"
 
 
 class LessonBase(BaseModel):
@@ -86,6 +113,7 @@ class LessonUpdate(BaseModel):
     content: str | None = None
     video_url: str | None = None
     order: int | None = None
+    materials: list[LessonMaterial] | None = None
 
 
 class LessonOut(LessonBase):
