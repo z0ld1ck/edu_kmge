@@ -1,9 +1,12 @@
-"""Назначение курсов сотрудникам/подразделениям с дедлайнами (админ/преподаватель)."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,12 +17,66 @@ from ..serializers import _is_overdue
 
 router = APIRouter(prefix="/api/admin/assignments", tags=["assignments"])
 
+_STATUS_LABELS = {
+    models.EnrollmentStatus.enrolled: "Записан",
+    models.EnrollmentStatus.in_progress: "В процессе",
+    models.EnrollmentStatus.completed: "Завершён",
+}
+
+
+async def _fetch_rows(
+        db: AsyncSession,
+        course_id: int | None,
+        department: str | None,
+        status: str | None,
+) -> list[schemas.AssignmentRow]:
+    stmt = (
+        select(models.Enrollment, models.User, models.Course)
+        .join(models.User, models.User.id == models.Enrollment.user_id)
+        .join(models.Course, models.Course.id == models.Enrollment.course_id)
+        .where(models.Enrollment.assigned_by_id.is_not(None))
+    )
+    if course_id is not None:
+        stmt = stmt.where(models.Enrollment.course_id == course_id)
+    if department:
+        stmt = stmt.where(models.User.department == department)
+    stmt = stmt.order_by(models.Enrollment.due_date.is_(None), models.Enrollment.due_date)
+
+    rows = await db.execute(stmt)
+    out: list[schemas.AssignmentRow] = []
+    for enr, user, course in rows.all():
+        overdue = _is_overdue(enr)
+        if status == "overdue" and not overdue:
+            continue
+        if status == "completed" and enr.status != models.EnrollmentStatus.completed:
+            continue
+        if status == "pending" and (
+                overdue or enr.status == models.EnrollmentStatus.completed
+        ):
+            continue
+        out.append(
+            schemas.AssignmentRow(
+                enrollment_id=enr.id,
+                user_id=user.id,
+                user_name=user.full_name,
+                department=user.department,
+                course_id=course.id,
+                course_title=course.title,
+                status=enr.status,
+                progress=enr.progress,
+                due_date=enr.due_date,
+                is_mandatory=bool(enr.is_mandatory),
+                is_overdue=overdue,
+            )
+        )
+    return out
+
 
 @router.post("", response_model=schemas.AssignmentResult, status_code=201)
 async def create_assignment(
-    data: schemas.AssignmentCreate,
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(require_staff),
+        data: schemas.AssignmentCreate,
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(require_staff),
 ):
     course = await db.get(models.Course, data.course_id)
     if not course:
@@ -66,59 +123,72 @@ async def create_assignment(
 
 @router.get("", response_model=list[schemas.AssignmentRow])
 async def list_assignments(
-    course_id: int | None = Query(None),
-    department: str | None = Query(None),
-    status: str | None = Query(None, description="overdue | pending | completed"),
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(require_staff),
+        course_id: int | None = Query(None),
+        department: str | None = Query(None),
+        status: str | None = Query(None, description="overdue | pending | completed"),
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(require_staff),
 ):
-    stmt = (
-        select(models.Enrollment, models.User, models.Course)
-        .join(models.User, models.User.id == models.Enrollment.user_id)
-        .join(models.Course, models.Course.id == models.Enrollment.course_id)
-        .where(models.Enrollment.assigned_by_id.is_not(None))
-    )
-    if course_id is not None:
-        stmt = stmt.where(models.Enrollment.course_id == course_id)
-    if department:
-        stmt = stmt.where(models.User.department == department)
-    stmt = stmt.order_by(models.Enrollment.due_date.is_(None), models.Enrollment.due_date)
+    return await _fetch_rows(db, course_id, department, status)
 
-    rows = await db.execute(stmt)
-    out: list[schemas.AssignmentRow] = []
-    for enr, user, course in rows.all():
-        overdue = _is_overdue(enr)
-        if status == "overdue" and not overdue:
-            continue
-        if status == "completed" and enr.status != models.EnrollmentStatus.completed:
-            continue
-        if status == "pending" and (
-            overdue or enr.status == models.EnrollmentStatus.completed
-        ):
-            continue
-        out.append(
-            schemas.AssignmentRow(
-                enrollment_id=enr.id,
-                user_id=user.id,
-                user_name=user.full_name,
-                department=user.department,
-                course_id=course.id,
-                course_title=course.title,
-                status=enr.status,
-                progress=enr.progress,
-                due_date=enr.due_date,
-                is_mandatory=bool(enr.is_mandatory),
-                is_overdue=overdue,
-            )
-        )
-    return out
+
+@router.get("/export")
+async def export_assignments(
+        course_id: int | None = Query(None),
+        department: str | None = Query(None),
+        status: str | None = Query(None, description="overdue | pending | completed"),
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(require_staff),
+):
+    rows = await _fetch_rows(db, course_id, department, status)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Назначения"
+    headers = [
+        "Сотрудник", "Подразделение", "Курс", "Статус",
+        "Прогресс, %", "Дедлайн", "Обязательный", "Просрочен",
+    ]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    for r in rows:
+        ws.append([
+            r.user_name,
+            r.department or "",
+            r.course_title,
+            _STATUS_LABELS.get(r.status, str(r.status)),
+            round(r.progress),
+            r.due_date.strftime("%d.%m.%Y") if r.due_date else "",
+            "Да" if r.is_mandatory else "Нет",
+            "Да" if r.is_overdue else "Нет",
+        ])
+
+    widths = [28, 20, 34, 14, 12, 14, 14, 12]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    ws.freeze_panes = "A2"
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    filename = f"assignments_{stamp}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete("/{enrollment_id}", status_code=204)
 async def remove_assignment(
-    enrollment_id: int,
-    db: AsyncSession = Depends(get_db),
-    current: models.User = Depends(require_staff),
+        enrollment_id: int,
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(require_staff),
 ):
     enr = await db.get(models.Enrollment, enrollment_id)
     if enr is None or enr.assigned_by_id is None:

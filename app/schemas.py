@@ -116,6 +116,11 @@ class LessonUpdate(BaseModel):
     materials: list[LessonMaterial] | None = None
 
 
+class LessonReorder(BaseModel):
+    """Новый порядок уроков курса: список id в нужной последовательности."""
+    lesson_ids: list[int]
+
+
 class LessonOut(LessonBase):
     model_config = ConfigDict(from_attributes=True)
     id: int

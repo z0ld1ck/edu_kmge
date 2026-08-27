@@ -155,6 +155,31 @@ async def delete_lesson(
     await db.delete(lesson)
     await db.commit()
 
+    await db.delete(lesson)
+    await db.commit()
+
+
+@router.post("/{course_id}/lessons/reorder", response_model=schemas.CourseDetail)
+async def reorder_lessons(
+        course_id: int,
+        data: schemas.LessonReorder,
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
+):
+    course = await _get_course(db, course_id)
+    by_id = {l.id: l for l in course.lessons}
+    unknown = [lid for lid in data.lesson_ids if lid not in by_id]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Уроки не найдены: {unknown}")
+    for index, lid in enumerate(data.lesson_ids):
+        by_id[lid].order = index
+    await db.commit()
+    course = await _get_course(db, course_id)
+    return course_detail(course)
+
+
+# ---------- Материалы урока ----------
+
 
 # ---------- Материалы урока ----------
 def _material_url(lesson_id: int, filename: str) -> str:
