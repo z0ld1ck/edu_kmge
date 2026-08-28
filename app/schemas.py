@@ -245,6 +245,16 @@ class MyCourseOut(BaseModel):
     enrollment: EnrollmentOut
 
 
+class NotificationItem(BaseModel):
+    """Уведомление о приближающемся/просроченном дедлайне курса."""
+    course_id: int
+    course_title: str
+    due_date: datetime
+    days_left: int  # отрицательное — просрочено
+    is_overdue: bool
+    is_mandatory: bool
+
+
 class AssignmentCreate(BaseModel):
     course_id: int
     user_ids: list[int] = []

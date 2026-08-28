@@ -94,6 +94,44 @@ async def my_courses(
     return out
 
 
+@router.get("/my/notifications", response_model=list[schemas.NotificationItem])
+async def my_notifications(
+        db: AsyncSession = Depends(get_db),
+        current: models.User = Depends(get_current_user),
+):
+    """Курсы текущего пользователя с дедлайном, кроме завершённых.
+    Отсортированы по близости срока (сначала самые срочные/просроченные)."""
+    result = await db.execute(
+        select(models.Enrollment)
+        .options(selectinload(models.Enrollment.course))
+        .where(
+            models.Enrollment.user_id == current.id,
+            models.Enrollment.due_date.is_not(None),
+        )
+    )
+    now = datetime.now(timezone.utc)
+    out: list[schemas.NotificationItem] = []
+    for enr in result.scalars().all():
+        if enr.status == models.EnrollmentStatus.completed:
+            continue
+        due = enr.due_date
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        days_left = (due.date() - now.date()).days
+        out.append(
+            schemas.NotificationItem(
+                course_id=enr.course_id,
+                course_title=enr.course.title,
+                due_date=enr.due_date,
+                days_left=days_left,
+                is_overdue=due < now,
+                is_mandatory=bool(enr.is_mandatory),
+            )
+        )
+    out.sort(key=lambda n: n.due_date)
+    return out
+
+
 @router.get("/my/attempts", response_model=list[schemas.AttemptOut])
 async def my_attempts(
         db: AsyncSession = Depends(get_db),

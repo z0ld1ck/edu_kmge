@@ -17,6 +17,8 @@ from ..serializers import course_detail, course_out
 router = APIRouter(prefix="/api/courses", tags=["courses"])
 
 _MEDIA_LESSONS = Path(settings.media_root) / "lessons"
+_MEDIA_COVERS = Path(settings.media_root) / "covers"
+_COVER_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 _LOAD = (selectinload(models.Course.lessons), selectinload(models.Course.quiz))
 
 
@@ -179,9 +181,6 @@ async def reorder_lessons(
 
 
 # ---------- Материалы урока ----------
-
-
-# ---------- Материалы урока ----------
 def _material_url(lesson_id: int, filename: str) -> str:
     return f"/api/courses/materials/{lesson_id}/{filename}"
 
@@ -300,6 +299,61 @@ async def get_material_file(
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Файл не найден")
     return FileResponse(path, media_type="application/pdf", filename=safe)
+
+
+# ---------- Обложка курса ----------
+@router.post("/{course_id}/cover", response_model=schemas.CourseDetail)
+async def upload_cover(
+        course_id: int,
+        file: UploadFile = File(...),
+        db: AsyncSession = Depends(get_db),
+        _: models.User = Depends(require_staff),
+):
+    """Загрузить картинку-обложку курса. Файл кладётся на диск, в cover_url —
+    ссылка на раздачу."""
+    course = await _get_course(db, course_id)
+    ext = _COVER_EXT.get((file.content_type or "").lower())
+    if ext is None:
+        # Фолбэк по расширению: http-multipart часто шлёт octet-stream.
+        name = (file.filename or "").lower()
+        for e in (".jpeg", ".jpg", ".png", ".webp", ".gif"):
+            if name.endswith(e):
+                ext = ".jpg" if e == ".jpeg" else e
+                break
+    if ext is None:
+        raise HTTPException(
+            status_code=400, detail="Разрешены изображения JPG, PNG, WEBP, GIF"
+        )
+    data = await file.read()
+    limit = settings.max_upload_mb * 1024 * 1024
+    if len(data) > limit:
+        raise HTTPException(
+            status_code=400, detail=f"Файл больше {settings.max_upload_mb} МБ"
+        )
+    dest_dir = _MEDIA_COVERS / str(course_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    # чистим прежние файлы обложки этого курса
+    for old in dest_dir.glob("*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    stored = f"{uuid.uuid4().hex}{ext}"
+    (dest_dir / stored).write_bytes(data)
+    course.cover_url = f"/api/courses/cover/{course_id}/{stored}"
+    await db.commit()
+    course = await _get_course(db, course_id)
+    return course_detail(course)
+
+
+@router.get("/cover/{course_id}/{filename}")
+async def get_cover_file(course_id: int, filename: str):
+    """Отдать файл обложки (публично — используется в <img>)."""
+    safe = Path(filename).name
+    path = _MEDIA_COVERS / str(course_id) / safe
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    return FileResponse(path)
 
 
 # ---------- Тест ----------
